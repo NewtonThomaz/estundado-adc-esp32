@@ -1,0 +1,17 @@
+CompileFlags:
+  Remove:
+    - -mlongcalls
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+    - -fno-jump-tables
+    - -Wno-frame-address
+    - -freorder-blocks
+  Add:
+    - -isystem
+    - C:/Users/Pichau/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include
+    - -isystem
+    - C:/Users/Pichau/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include/c++/8.4.0
+    - -isystem
+    - C:/Users/Pichau/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include/c++/8.4.0/xtensa-esp32-elf
+    - -isystem
+    - C:/Users/Pichau/.platformio/packages/toolchain-xtensa-esp32/lib/gcc/xtensa-esp32-elf/8.4.0/include
