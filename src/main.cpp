@@ -4,9 +4,9 @@
 #include <Wire.h>
 
 #define PIN_POTENCIOMETRO 34
-#define PIN_DHT 23
-#define PIN_BTN_PH_UP 18
-#define PIN_BTN_PH_DOWN 19
+#define PIN_DHT           23
+#define PIN_BTN_PH_UP     18
+#define PIN_BTN_PH_DOWN   19
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -18,13 +18,101 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define DHTTYPE DHT11
 DHT dht(PIN_DHT, DHTTYPE);
 
-float simulatedPH = 7.0;
-float temperatura = 0.0;
-float umidade = 0.0;
-int condutividadePct = 0;
+struct TelemetriaSensores {
+  int valorRawADC;
+  int condutividadePct;
+  float temperatura;
+  float umidade;
+  float ph;
+  bool dhtValido;
+  unsigned long timestampMs;
+};
+
+TelemetriaSensores telemetriaAtual = {
+  .valorRawADC = 0,
+  .condutividadePct = 0,
+  .temperatura = 0.0f,
+  .umidade = 0.0f,
+  .ph = 7.0f,
+  .dhtValido = false,
+  .timestampMs = 0
+};
 
 unsigned long lastSensorRead = 0;
 const unsigned long SENSOR_INTERVAL = 2000;
+
+void lerEletrocondutividade(TelemetriaSensores &dados) {
+  long soma = 0;
+  for (int i = 0; i < 16; i++) {
+    soma += analogRead(PIN_POTENCIOMETRO);
+    delayMicroseconds(200);
+  }
+  dados.valorRawADC = soma / 16;
+  dados.condutividadePct = map(dados.valorRawADC, 0, 4095, 0, 100);
+}
+
+void lerDHT(TelemetriaSensores &dados) {
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  if (isnan(t) || isnan(h)) {
+    dados.dhtValido = false;
+    Serial.println("[ERRO DHT] Falha ao ler sensor! Verifique conexao no GPIO 23 / Alimentacao.");
+  } else {
+    dados.temperatura = t;
+    dados.umidade = h;
+    dados.dhtValido = true;
+  }
+}
+
+void processarBotoesPH(TelemetriaSensores &dados) {
+  if (digitalRead(PIN_BTN_PH_UP) == LOW) {
+    if (dados.ph < 14.0f) dados.ph += 0.1f;
+    delay(150);
+  }
+  if (digitalRead(PIN_BTN_PH_DOWN) == LOW) {
+    if (dados.ph > 0.0f) dados.ph -= 0.1f;
+    delay(150);
+  }
+}
+
+void atualizarDisplay(const TelemetriaSensores &dados) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  
+  display.setCursor(0, 0);
+  display.println("--- AGROSYNC IOT ---");
+
+  display.setCursor(0, 16);
+  if (!dados.dhtValido && dados.temperatura == 0.0f) {
+    display.print("DHT: Lendo/Falha...");
+  } else {
+    display.printf("Temp: %.1f C", dados.temperatura);
+  }
+
+  display.setCursor(0, 28);
+  display.printf("Umid: %.1f %%", dados.umidade);
+
+  display.setCursor(0, 40);
+  display.printf("Cond (EC): %d %%", dados.condutividadePct);
+
+  display.setCursor(0, 52);
+  display.printf("pH: %.1f | ADC: %d", dados.ph, dados.valorRawADC);
+
+  display.display();
+}
+
+void logTelemetriaSerial(const TelemetriaSensores &dados) {
+  Serial.printf("[TELEMETRIA] T: %.1f C | U: %.1f%% | EC: %d%% (ADC: %d) | pH: %.1f | DHT: %s | Timestamp: %lums\n",
+                dados.temperatura,
+                dados.umidade,
+                dados.condutividadePct,
+                dados.valorRawADC,
+                dados.ph,
+                dados.dhtValido ? "OK" : "FALHA",
+                dados.timestampMs);
+}
 
 void setup() {
   Serial.begin(115200);
@@ -45,71 +133,25 @@ void setup() {
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
-    display.setCursor(20, 25);
-    display.println("Sistema Iniciado");
+    display.setCursor(15, 25);
+    display.println("AgroSync Iniciado");
     display.display();
     delay(1000);
   }
 }
 
 void loop() {
-  if (digitalRead(PIN_BTN_PH_UP) == LOW) {
-    if (simulatedPH < 14.0)
-      simulatedPH += 0.1;
-    delay(150);
-  }
-
-  if (digitalRead(PIN_BTN_PH_DOWN) == LOW) {
-    if (simulatedPH > 0.0)
-      simulatedPH -= 0.1;
-    delay(150);
-  }
-
-  long soma = 0;
-  for (int i = 0; i < 16; i++) {
-    soma += analogRead(PIN_POTENCIOMETRO);
-    delayMicroseconds(200);
-  }
-  int potRaw = soma / 16;
-  condutividadePct = map(potRaw, 0, 4095, 0, 100);
+  processarBotoesPH(telemetriaAtual);
+  lerEletrocondutividade(telemetriaAtual);
+  telemetriaAtual.timestampMs = millis();
 
   unsigned long currentMillis = millis();
   if (currentMillis - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = currentMillis;
-    float t = dht.readTemperature();
-    float h = dht.readHumidity();
-
-    if (isnan(t) || isnan(h)) {
-      Serial.println("[ERRO] Falha ao ler do sensor DHT! Verifique conexao/alimentacao (3V3 vs VIN) no GPIO 4.");
-    } else {
-      temperatura = t;
-      umidade = h;
-    }
-
-    Serial.printf("ADC Pot (GPIO 34): %d | Cond: %d%% | Temp: %.1f C | Umid: %.1f%% | pH: %.1f\n", potRaw, condutividadePct, temperatura, umidade, simulatedPH);
+    lerDHT(telemetriaAtual);
+    logTelemetriaSerial(telemetriaAtual);
   }
 
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("--- MONITOR IOT ---");
-
-  display.setCursor(0, 16);
-  if (temperatura == 0.0 && umidade == 0.0) {
-    display.print("DHT: Lendo/Falha...");
-  } else {
-    display.printf("Temp: %.1f C", temperatura);
-  }
-
-  display.setCursor(0, 28);
-  display.printf("Umid: %.1f %%", umidade);
-
-  display.setCursor(0, 40);
-  display.printf("Cond (EC): %d %%", condutividadePct);
-
-  display.setCursor(0, 52);
-  display.printf("pH Simulado: %.1f", simulatedPH);
-
-  display.display();
+  atualizarDisplay(telemetriaAtual);
   delay(50);
 }
